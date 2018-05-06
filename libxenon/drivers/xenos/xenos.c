@@ -507,93 +507,68 @@ void xenos_set_mode(struct mode_s *mode)
 	xenos_current_mode = mode;
 }
 
-int xenos_hdmi_vga_mode_fix(int mode)
+// fix some non standart mode (vga + yuv or hdmi/dvi + yuv )
+int xenos_is_vga()
 {
-	struct edid * monitor_edid = xenos_get_edid();
-		// fix some non standart mode (vga + yuv or hdmi/dvi + yuv )
-		if(monitor_edid) {
-			// HDMI or DVI
-			if(monitor_edid->input&DRM_EDID_INPUT_DIGITAL)
-				return VIDEO_MODE_HDMI_720P;
-			// VGA
-			else
-				return VIDEO_MODE_VGA_1024x768;
-		}
-		return mode;
+    struct edid *monitor_edid = xenos_get_edid();
+    if(monitor_edid && (monitor_edid->input & DRM_EDID_INPUT_DIGITAL) == 0) {
+        return 1;
 }
 
 void xenos_autoset_mode(void)
 {
-	int mode;
-	int avpack = xenon_smc_read_avpack();
-	//mode = VIDEO_MODE_VGA_1024x768;
+        int xenos_mode = VIDEO_MODE_INVALID;
+        int av_mode = xenon_smc_read_avpack();
+        int av_region = xenon_config_get_avregion();
 
-	switch (xenon_config_get_avregion())
-	{
-	case AVREGION_NTSCJ:
-	case AVREGION_NTSCM:
-		mode = VIDEO_MODE_NTSC;
-		break;
-	case AVREGION_PAL50:
-		mode = VIDEO_MODE_PAL50;
-		break;
-	case AVREGION_PAL60:
-		mode = VIDEO_MODE_PAL60;
-		break;
-	default:
-		mode = VIDEO_MODE_PAL60;
-		break;
-	}
+        int av_pack = (av_mode >> 2) & 7;
+        int hd_port = ((av_mode >> 6) & 1) ^ 1;
+        int av_submode = av_mode & 3;
 
-	printf("AVPACK detected: %02x\n", avpack);
+	printf("AVMODE: 0x%x, AVPACK: 0x%x, SUBMODE: 0x%x, HDP: %s, AVREGION: %x\n",
+                av_mode, av_pack, av_submode, hd_port == 1 ? "YES" : "NO", av_region);
 
-	switch (avpack)
-	{
-	case 0x13: // HDMI_AUDIO
-	case 0x14: // HDMI_AUDIO - GHETTO MOD
-	case 0x1C: // HDMI_AUDIO - GHETTO MOD
-	case 0x1E: // HDMI
-	case 0x1F: // HDMI
-		mode = VIDEO_MODE_HDMI_720P;
-		break;
-	case 0x43: // COMPOSITE - TV MODE
-	case 0x47: // SCART
-	case 0x54: // COMPOSITE + S-VIDEO
-	case 0x57: // NORMAL COMPOSITE
-		break;
-	case 0x0C: // COMPONENT
-	case 0x0F: // COMPONENT
-	case 0x4F: // COMPOSITE - HD MODE
-		mode = VIDEO_MODE_YUV_720P;
-		break;
-	case 0x5B: // VGA
-	case 0x59: // also vga
-	case 0x1B: // this fixes a generic vga adapter, was under HDMI
-		mode = VIDEO_MODE_VGA_1024x768;
-		break;
-	default:
-		break;
-	}
-		
-	switch (avpack)
-	{
-	case 0x43: // COMPOSITE - TV MODE
-	case 0x47: // SCART
-	case 0x54: // COMPOSITE + S-VIDEO
-	case 0x57: // NORMAL COMPOSITE
-	case 0x0C: // COMPONENT
-	case 0x0F: // COMPONENT
-	case 0x4F: // COMPOSITE - HD MODE
-		break;
-	default:
-		mode = xenos_hdmi_vga_mode_fix(mode);
-		break;
-	}
+        switch (av_region) {
+            case AVREGION_NTSCJ:
+            case AVREGION_NTSCM:
+                    xenos_mode = VIDEO_MODE_NTSC;
+                    break;
+            case AVREGION_PAL50:
+                    xenos_mode = VIDEO_MODE_PAL50;
+                    break;
+            case AVREGION_PAL60:
+                    xenos_mode = VIDEO_MODE_PAL60;
+                    break;
+            default:
+                    xenos_mode = VIDEO_MODE_PAL50;
+                    break;
+        }
+
+	switch (av_mode) {
+            case AVPACK.YUV:
+                xenos_mode = VIDEO_MODE_YUV_720P;
+                break;
+            case AVPACK.VGA:
+                xenos_mode = VIDEO_MODE_VGA_1024x768;
+                break;
+            default:
+                if (hd_port == 1 && xenos_is_vga() == 1) {
+                    printf("HDP flag, EDID Analog: Setting VGA mode\n");
+                    xenos_mode = VIDEO_MODE_VGA_1024x768;
+                }
+                else if (hd_port == 1) {
+                    printf("HDP flag, EDID Digital: Setting HDMI mode\n");
+                    xenos_mode = VIDEO_MODE_HDMI_720P
+                }
+                else {
+                    printf("No HD mode enumerated, setting SD mode...\n")
+                }
+        }
 
 	if (xenos_is_corona)
-		xenos_set_mode(&xenos_modes_corona[mode]);
+		xenos_set_mode(&xenos_modes_corona[xenos_mode]);
 	else
-		xenos_set_mode(&xenos_modes[mode]);
+		xenos_set_mode(&xenos_modes[xenos_mode]);
 }
 
 void xenos_init(int videoMode)
